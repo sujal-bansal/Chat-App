@@ -1,13 +1,15 @@
 import User from "../models/user.model.js";
 import Message from "../models/message.model.js";
+import cloudinary from "../lib/cloudinary.js";
+import { getReceiverSocketId, io } from "../lib/socket.js";
 
 export const getUsersForSidebar = async (req, res) => {
   try {
     const loggedInUserId = req.user._id;
 
-    const filteredUsers = User.find({ id: { $ne: loggedInUserId } }).select(
-      "-password"
-    );
+    const filteredUsers = await User.find({
+      _id: { $ne: loggedInUserId },
+    }).select("-password");
 
     res.status(200).json(filteredUsers);
   } catch (error) {
@@ -21,7 +23,7 @@ export const getMessages = async (req, res) => {
     const { id: chatToUserId } = req.params;
     const myId = req.user._id;
 
-    const messages = Message.find({
+    const messages = await Message.find({
       $or: [
         { senderId: myId, receiverId: chatToUserId },
         { senderId: chatToUserId, receiverId: myId },
@@ -38,13 +40,14 @@ export const sendMessage = async (req, res) => {
   try {
     const { text, image } = req.body;
     const { id: receiverId } = req.params;
-    const { id: senderId } = req.user._id;
+    const senderId = req.user._id;
 
     let imageUrl;
     if (image) {
       const uploadResponse = await cloudinary.uploader.upload(image);
       imageUrl = uploadResponse.secure_url;
     }
+
     const newMessage = new Message({
       senderId,
       receiverId,
@@ -52,6 +55,11 @@ export const sendMessage = async (req, res) => {
       image: imageUrl,
     });
     await newMessage.save();
+    const receiverSocketId = getReceiverSocketId(receiverId);
+    if (receiverId) {
+      io.to(receiverSocketId).emit("newMessage", newMessage);
+    }
+
     res.status(201).json(newMessage);
   } catch (error) {
     console.log("Error in sendMessage controller", error.message);
